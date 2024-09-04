@@ -2,7 +2,9 @@ package main
 
 import (
 	"sync"
+	"time"
 	"validator/config"
+	"validator/pkgs/clients"
 	"validator/pkgs/helpers"
 )
 
@@ -11,6 +13,7 @@ func main() {
 
 	helpers.InitLogger()
 	config.LoadConfig()
+	clients.InitializeReportingClient(config.SettingsObj.SlackReportingUrl, 60*time.Second)
 	helpers.ConfigureClient()
 	helpers.ConfigureContractInstance()
 	helpers.RedisClient = helpers.NewRedisClient()

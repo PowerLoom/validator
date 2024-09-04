@@ -17,11 +17,12 @@ func NewRedisClient() *redis.Client {
 	return redis.NewClient(&redis.Options{
 		Addr:     fmt.Sprintf("%s:%s", config.SettingsObj.RedisHost, config.SettingsObj.RedisPort), // Redis server address
 		Password: "",                                                                               // no password set
-		DB:       0,                                                                                // use default DB
+		DB:       config.SettingsObj.RedisDB,                                                       // use default DB
 	})
 }
 
 func Set(ctx context.Context, client *redis.Client, key string, value string, expiration time.Duration) error {
+	// TODO: This s probably not neccessary
 	if _, err := Get(ctx, client, key); err != nil && !errors.Is(err, redis.Nil) {
 		return err
 	}

@@ -1,8 +1,9 @@
 module validator
 
-go 1.20
+go 1.22
 
 require (
+	github.com/cenkalti/backoff/v4 v4.2.0
 	github.com/ethereum/go-ethereum v1.13.12
 	github.com/go-redis/redis/v8 v8.11.5
 	github.com/ipfs/go-ipfs-api v0.7.0

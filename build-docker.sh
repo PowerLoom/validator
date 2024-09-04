@@ -1,1 +1,1 @@
-docker build -t powerloom-submission-validator .
+docker build -t proto-submission-validator . --no-cache

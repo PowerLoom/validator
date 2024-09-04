@@ -33,7 +33,7 @@ func SubmitAttestation(key string, cid []byte) {
 	var tx *types.Transaction
 	var err error
 	nonce := Auth.Nonce.String()
-	for tx, err = Instance.SubmitBatchAttestation(Auth, batchId, epochId, [32]byte(cid)); err != nil; {
+	for tx, err = Instance.SubmitBatchAttestation(Auth, config.SettingsObj.DataMarketAddress, batchId, epochId, [32]byte(cid)); err != nil; {
 		time.Sleep(time.Duration(config.SettingsObj.BlockTime) * time.Second)
 		nonce = Auth.Nonce.String()
 		multiplier = HandleAttestationSubmissionError(err, multiplier, batchId.String())

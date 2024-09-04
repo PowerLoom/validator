@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"github.com/cenkalti/backoff/v4"
+	"github.com/ethereum/go-ethereum"
 	"github.com/ethereum/go-ethereum/accounts/abi"
 	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
@@ -17,6 +19,7 @@ import (
 	"strings"
 	"time"
 	"validator/config"
+	"validator/pkgs/clients"
 	"validator/pkgs/contract/contract"
 )
 
@@ -31,6 +34,7 @@ func ConfigureClient() {
 	Client, err = ethclient.Dial(config.SettingsObj.ClientUrl)
 	if err != nil {
 		log.Fatal(err)
+		clients.SendFailureNotification("chain.go", "Failed to connect to blockchain client", time.Now().String(), "Critical")
 	}
 }
 
@@ -38,11 +42,13 @@ func SetupAuth() {
 	nonce, err := Client.PendingNonceAt(context.Background(), config.SettingsObj.SignerAccountAddress)
 	if err != nil {
 		log.Fatalf("Failed to get nonce: %v", err)
+		clients.SendFailureNotification("chain.go", "Failed to get pending noce for account", time.Now().String(), "Critical")
 	}
 
 	Auth, err = bind.NewKeyedTransactorWithChainID(config.SettingsObj.PrivateKey, big.NewInt(int64(config.SettingsObj.ChainID)))
 	if err != nil {
 		log.Fatalf("Failed to create authorized transactor: %v", err)
+		clients.SendFailureNotification("chain.go", "Failed to create authorized transactor", time.Now().String(), "Critical")
 	}
 
 	Auth.Nonce = big.NewInt(int64(nonce))
@@ -55,6 +61,7 @@ func UpdateGasPrice(multiplier int) {
 	gasPrice, err := Client.SuggestGasPrice(context.Background())
 	if err != nil {
 		log.Errorf("Failed to get gas price: %v", err)
+		clients.SendFailureNotification("chain.go", "Failed to get gas price", time.Now().String(), "High")
 	}
 	Auth.GasPrice = gasPrice.Mul(gasPrice, big.NewInt(int64(multiplier)))
 }
@@ -69,6 +76,7 @@ func StartFetchingBlocks() {
 
 	if err != nil {
 		log.Fatal(err)
+		clients.SendFailureNotification("chain.go", "Failed to parse contract ABI", time.Now().String(), "Critical")
 	}
 
 	for {
@@ -76,6 +84,7 @@ func StartFetchingBlocks() {
 		block, err = Client.BlockByNumber(context.Background(), nil)
 		if err != nil || block == nil {
 			log.Errorf("Failed to fetch latest block: %s", err.Error())
+			clients.SendFailureNotification("chain.go", "Failed to fetch latest block", time.Now().String(), "Medium")
 			continue
 		}
 
@@ -85,32 +94,53 @@ func StartFetchingBlocks() {
 
 			// iterate all transactions in parallel and search for events
 			go func() {
-				for _, tx := range block.Transactions() {
-					receipt, err := Client.TransactionReceipt(context.Background(), tx.Hash())
-					if err != nil {
-						log.Errorln(err.Error())
+				var logs []types.Log
+				var err error
+
+				hash := block.Hash()
+				filterQuery := ethereum.FilterQuery{
+					BlockHash: &hash,
+					Addresses: []common.Address{common.HexToAddress(config.SettingsObj.ContractAddress)},
+					//Topics:    [][]common.Hash{{contractABI.Events["SnapshotBatchSubmitted"].ID, contractABI.Events["EpochReleased"].ID}},
+				}
+
+				operation := func() error {
+					logs, err = Client.FilterLogs(context.Background(), filterQuery)
+					return err
+				}
+
+				if err = backoff.Retry(operation, backoff.WithMaxRetries(backoff.NewConstantBackOff(200*time.Millisecond), 3)); err != nil {
+					log.Errorln("Error fetching logs: ", err.Error())
+					clients.SendFailureNotification("ProcessEvents", fmt.Sprintf("Error fetching logs: %s", err.Error()), time.Now().String(), "High")
+					return
+				}
+
+				for _, vLog := range logs {
+					if vLog.Address.Hex() != config.SettingsObj.ContractAddress {
 						continue
 					}
-					for _, vLog := range receipt.Logs {
-						if vLog.Address.Hex() != config.SettingsObj.ContractAddress {
+					switch vLog.Topics[0].Hex() {
+					case contractABI.Events["SnapshotBatchSubmitted"].ID.Hex():
+						event, err := Instance.ParseSnapshotBatchSubmitted(vLog)
+						if err != nil {
+							log.Debugln("Error unpacking SnapshotBatchSubmitted event:", err)
+							clients.SendFailureNotification("chain.go", "Error unpacking SnapshotBatchSubmitted event", time.Now().String(), "High")
 							continue
 						}
-						switch vLog.Topics[0].Hex() {
-						case contractABI.Events["SnapshotBatchSubmitted"].ID.Hex():
-							event, err := Instance.ParseSnapshotBatchSubmitted(*vLog)
-							if err != nil {
-								log.Debugln("Error unpacking SnapshotBatchSubmitted event:", err)
-								continue
-							}
-							// begin building merkle tree
+						if event.DataMarketAddress == config.SettingsObj.DataMarketAddress {
 							go storeBatchSubmission(event)
-						case contractABI.Events["EpochReleased"].ID.Hex():
-							event, err := Instance.ParseEpochReleased(*vLog)
-							if err != nil {
-								log.Debugln("Error unpacking epochReleased event:", err)
-								continue
-							}
-							event.EpochId = new(big.Int).SetBytes(vLog.Topics[1][:])
+						}
+						// begin building merkle tree
+
+					case contractABI.Events["EpochReleased"].ID.Hex():
+						event, err := Instance.ParseEpochReleased(vLog)
+						if err != nil {
+							log.Debugln("Error unpacking epochReleased event:", err)
+							clients.SendFailureNotification("chain.go", "Error unpacking epochReleased event", time.Now().String(), "High")
+							continue
+						}
+						event.EpochId = new(big.Int).SetBytes(vLog.Topics[1][:])
+						if event.DataMarketAddress == config.SettingsObj.DataMarketAddress {
 							if CurrentEpochID.Cmp(event.EpochId) < 0 {
 								CurrentEpochID.Set(event.EpochId)
 								go triggerValidationFlow(new(big.Int).Set(CurrentEpochID))
@@ -135,6 +165,7 @@ func PopulateStateVars() {
 			break
 		} else {
 			log.Debugln("Encountered error while fetching current block: ", err.Error())
+			clients.SendFailureNotification("chain.go", "Encountered error while fetching current block", time.Now().String(), "Mild")
 		}
 	}
 	CurrentEpochID.Set(big.NewInt(0))
@@ -150,10 +181,12 @@ func storeBatchSubmission(event *contract.ContractSnapshotBatchSubmitted) {
 	submissionIds, err := json.Marshal(batch.SubmissionIds)
 	if err != nil {
 		log.Errorf("Unable to unmarshal submissionIds for batch %d epochId %s: %s\n", batch.ID, event.EpochId.String(), err.Error())
+		clients.SendFailureNotification("chain.go", "Failed to marshal submissionIds", time.Now().String(), "High")
 	}
 	err = Set(context.Background(), RedisClient, fmt.Sprintf("%s.%s.%s", ValidatorKey, event.EpochId.String(), batch.ID.String()), string(submissionIds), time.Hour)
 	if err != nil {
 		log.Errorf("Unable to store submissions for batch %d epochId %s: %s\n", batch.ID, event.EpochId.String(), err.Error())
+		clients.SendFailureNotification("chain.go", "Failed to store submissions", time.Now().String(), "High")
 	}
 }
 
@@ -169,6 +202,7 @@ func triggerValidationFlow(epochId *big.Int) {
 
 	if err != nil {
 		log.Errorf("Unable to fetch keys for pattern %s: %s\n", pattern, err.Error())
+		clients.SendFailureNotification("chain.go", "Failed to fetch keys for pattern", time.Now().String(), "High")
 	}
 
 	sort.Slice(keys, func(i, j int) bool {
@@ -184,16 +218,19 @@ func triggerValidationFlow(epochId *big.Int) {
 		value, err := Get(context.Background(), RedisClient, key)
 		if err != nil {
 			log.Errorln("Error fetching data from redis: ", err.Error())
+			clients.SendFailureNotification("chain.go", "Error fetching data from redis", time.Now().String(), "High")
 		}
 		log.Debugf("Fetched submissions for key %s\n", key)
 		var batchSubmissionIds []string
 		err = json.Unmarshal([]byte(value), &batchSubmissionIds)
 		if err != nil {
 			log.Errorf("Unable to unmarshal batch submissionIds for key: %s\n", key)
+			clients.SendFailureNotification("chain.go", "Failed to unmarshal batch submissionIds", time.Now().String(), "High")
 		}
 		_, err = UpdateMerkleTree(batchSubmissionIds, tree)
 		if err != nil {
 			log.Errorf("Unable to build Merkel tree: %s\n", err.Error())
+			clients.SendFailureNotification("chain.go", "Failed to build Merkel tree", time.Now().String(), "High")
 		}
 		SubmitAttestation(key, tree.RootDigest())
 	}
@@ -240,7 +277,7 @@ func EnsureTxSuccess(epochID *big.Int) {
 						updatedNonce := Auth.Nonce.String()
 						UpdateGasPrice(1)
 						var reTx *types.Transaction
-						for reTx, err = Instance.SubmitBatchAttestation(Auth, batchID, epochID, [32]byte(common.Hex2Bytes(cid))); err != nil; {
+						for reTx, err = Instance.SubmitBatchAttestation(Auth, config.SettingsObj.DataMarketAddress, batchID, epochID, [32]byte(common.Hex2Bytes(cid))); err != nil; {
 							updatedNonce = Auth.Nonce.String()
 							multiplier = HandleAttestationSubmissionError(err, multiplier, batchID.String())
 						}
