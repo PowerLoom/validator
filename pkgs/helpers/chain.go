@@ -2,6 +2,7 @@ package helpers
 
 import (
 	"context"
+	"crypto/tls"
 	"encoding/json"
 	"fmt"
 	"github.com/cenkalti/backoff/v4"
@@ -11,9 +12,11 @@ import (
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/core/types"
 	"github.com/ethereum/go-ethereum/ethclient"
+	"github.com/ethereum/go-ethereum/rpc"
 	"github.com/sergerad/incremental-merkle-tree/imt"
 	log "github.com/sirupsen/logrus"
 	"math/big"
+	"net/http"
 	"sort"
 	"strconv"
 	"strings"
@@ -30,12 +33,17 @@ var (
 )
 
 func ConfigureClient() {
-	var err error
-	Client, err = ethclient.Dial(config.SettingsObj.ClientUrl)
+	rpcClient, err := rpc.DialOptions(
+		context.Background(),
+		config.SettingsObj.ClientUrl,
+		rpc.WithHTTPClient(
+			&http.Client{Transport: &http.Transport{TLSClientConfig: &tls.Config{InsecureSkipVerify: true}}},
+		),
+	)
 	if err != nil {
 		log.Fatal(err)
-		clients.SendFailureNotification("chain.go", "Failed to connect to blockchain client", time.Now().String(), "Critical")
 	}
+	Client = ethclient.NewClient(rpcClient)
 }
 
 func SetupAuth() {
