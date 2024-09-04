@@ -1,1 +1,1 @@
-docker build -t proto-submission-validator . --no-cache
+docker build -t validator . --no-cache
