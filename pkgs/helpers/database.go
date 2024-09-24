@@ -21,17 +21,6 @@ func NewRedisClient() *redis.Client {
 	})
 }
 
-func Set(ctx context.Context, client *redis.Client, key string, value string, expiration time.Duration) error {
-	// TODO: This s probably not neccessary
-	if _, err := Get(ctx, client, key); err != nil && !errors.Is(err, redis.Nil) {
-		return err
-	}
-	if err := client.Set(ctx, key, value, expiration).Err(); err != nil {
-		return err
-	}
-	return nil
-}
-
 func Get(ctx context.Context, client *redis.Client, key string) (string, error) {
 	val, err := client.Get(ctx, key).Result()
 	if err != nil && !errors.Is(err, redis.Nil) {
@@ -40,55 +29,55 @@ func Get(ctx context.Context, client *redis.Client, key string) (string, error) 
 	return val, nil
 }
 
-func FetchKeysForPattern(ctx context.Context, client *redis.Client, pattern string) ([]string, error) {
-	var allKeys []string
-	var cursor uint64
-
-	for {
-		keys, newCursor, err := client.Scan(ctx, cursor, pattern, 100).Result()
-		if err != nil {
-			return nil, errors.New(fmt.Sprintf("Error scanning keys for pattern %s: %v", pattern, err))
-		}
-		allKeys = append(allKeys, keys...)
-
-		cursor = newCursor
-		if cursor == 0 {
-			break
-		}
-	}
-	return allKeys, nil
-}
-
 func ResetValidatorDBSubmissions(ctx context.Context, client *redis.Client, epochID *big.Int) {
-	pattern := fmt.Sprintf("%s.%d.*", ValidatorKey, epochID)
+	setKey := fmt.Sprintf("%s.%d", ValidatorKey, epochID)
 
-	// Use Scan to find keys matching the pattern.
-	var cursor uint64
-	var n int
-	var keysToDelete []string
-	for {
-		var keys []string
-		var err error
-		keys, cursor, err = client.Scan(ctx, cursor, pattern, 100).Result()
-		if err != nil {
-			log.Errorf("Error scanning keys: %v", err)
-		}
-		keysToDelete = append(keysToDelete, keys...)
-		n += len(keys)
-
-		if cursor == 0 { // No more keys
-			break
-		}
+	keysToDelete, err := FetchKeysFromSet(ctx, client, setKey)
+	if err != nil {
+		log.Errorf("Error fetching keys from set: %v", err)
+		return
 	}
 
-	// Delete the keys.
 	if len(keysToDelete) > 0 {
-		_, err := client.Del(ctx, keysToDelete...).Result()
-		if err != nil {
+		if err := DelWithSetTracking(ctx, client, keysToDelete, setKey); err != nil {
 			log.Errorf("Error deleting keys: %v", err)
 		}
-		log.Debugf("Deleted %d keys.\n", n)
+		log.Debugf("Deleted %d keys.\n", len(keysToDelete))
 	} else {
 		log.Debugln("No keys found to delete.")
 	}
+}
+
+func AddToSet(ctx context.Context, client *redis.Client, setKey, memberKey string) error {
+	return client.SAdd(ctx, setKey, memberKey).Err()
+}
+
+func RemoveFromSet(ctx context.Context, client *redis.Client, setKey, memberKey string) error {
+	return client.SRem(ctx, setKey, memberKey).Err()
+}
+
+func SetWithSetTracking(ctx context.Context, client *redis.Client, key, value string, expiration time.Duration, setKey string) error {
+	if err := client.Set(ctx, key, value, expiration).Err(); err != nil {
+		return err
+	}
+	if err := AddToSet(ctx, client, setKey, key); err != nil {
+		return err
+	}
+	return nil
+}
+
+func DelWithSetTracking(ctx context.Context, client *redis.Client, keys []string, setKey string) error {
+	if _, err := client.Del(ctx, keys...).Result(); err != nil {
+		return err
+	}
+	for _, key := range keys {
+		if err := RemoveFromSet(ctx, client, setKey, key); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+func FetchKeysFromSet(ctx context.Context, client *redis.Client, setKey string) ([]string, error) {
+	return client.SMembers(ctx, setKey).Result()
 }

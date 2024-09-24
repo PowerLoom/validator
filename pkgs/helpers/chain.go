@@ -191,7 +191,7 @@ func storeBatchSubmission(event *contract.ContractSnapshotBatchSubmitted) {
 		log.Errorf("Unable to unmarshal submissionIds for batch %d epochId %s: %s\n", batch.ID, event.EpochId.String(), err.Error())
 		clients.SendFailureNotification("chain.go", "Failed to marshal submissionIds", time.Now().String(), "High")
 	}
-	err = Set(context.Background(), RedisClient, fmt.Sprintf("%s.%s.%s", ValidatorKey, event.EpochId.String(), batch.ID.String()), string(submissionIds), time.Hour)
+	err = SetWithSetTracking(context.Background(), RedisClient, fmt.Sprintf("%s.%s.%s", ValidatorKey, event.EpochId.String(), batch.ID.String()), string(submissionIds), time.Hour, fmt.Sprintf("%s.%s", ValidatorKey, event.EpochId.String()))
 	if err != nil {
 		log.Errorf("Unable to store submissions for batch %d epochId %s: %s\n", batch.ID, event.EpochId.String(), err.Error())
 		clients.SendFailureNotification("chain.go", "Failed to store submissions", time.Now().String(), "High")
@@ -205,11 +205,11 @@ func triggerValidationFlow(epochId *big.Int) {
 		time.Sleep(time.Duration(config.SettingsObj.BlockTime) * time.Second)
 	}
 
-	pattern := fmt.Sprintf("%s.%s.*", ValidatorKey, epochId)
-	keys, err := FetchKeysForPattern(context.Background(), RedisClient, pattern)
+	pattern := fmt.Sprintf("%s.%s", ValidatorKey, epochId)
+	keys, err := FetchKeysFromSet(context.Background(), RedisClient, pattern)
 
 	if err != nil {
-		log.Errorf("Unable to fetch keys for pattern %s: %s\n", pattern, err.Error())
+		log.Errorf("Unable to fetch keys for set %s: %s\n", pattern, err.Error())
 		clients.SendFailureNotification("chain.go", "Failed to fetch keys for pattern", time.Now().String(), "High")
 	}
 
@@ -252,7 +252,7 @@ func triggerValidationFlow(epochId *big.Int) {
 
 func EnsureTxSuccess(epochID *big.Int) {
 	for {
-		keys, err := FetchKeysForPattern(context.Background(), RedisClient, fmt.Sprintf("%s.%s.*", TxsKey, epochID.String()))
+		keys, err := FetchKeysFromSet(context.Background(), RedisClient, fmt.Sprintf("%s.%s", TxsKey, epochID.String()))
 		SetupAuth()
 		if err != nil {
 			log.Debugf("Could not fetch submitted transactions: %s\n", err.Error())
