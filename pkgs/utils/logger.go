@@ -1,12 +1,13 @@
-package helpers
+package utils
 
 import (
 	"fmt"
-	log "github.com/sirupsen/logrus"
-	"github.com/sirupsen/logrus/hooks/writer"
 	"io"
 	"os"
 	"strconv"
+
+	log "github.com/sirupsen/logrus"
+	"github.com/sirupsen/logrus/hooks/writer"
 )
 
 func InitLogger() {
@@ -38,11 +39,12 @@ func InitLogger() {
 	} else {
 		logLevel, err := strconv.ParseUint(os.Args[1], 10, 32)
 		if err != nil || logLevel > 6 {
-			log.SetLevel(log.DebugLevel) //TODO: Change default level to error
+			log.SetLevel(log.ErrorLevel)
 		} else {
 			//TODO: Need to come up with approach to dynamically update logLevel.
 			log.SetLevel(log.Level(logLevel))
 		}
 	}
+
 	log.SetFormatter(&log.TextFormatter{FullTimestamp: true})
 }

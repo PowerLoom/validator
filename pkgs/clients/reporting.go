@@ -5,9 +5,10 @@ import (
 	"crypto/tls"
 	"encoding/json"
 	"fmt"
-	log "github.com/sirupsen/logrus"
 	"net/http"
 	"time"
+
+	log "github.com/sirupsen/logrus"
 )
 
 var reportingClient *ReportingService
@@ -37,7 +38,6 @@ func (s ValidatorAlert) String() string {
 
 // sendPostRequest sends a POST request to the specified URL
 func SendFailureNotification(processName, errorMsg, timestamp, severity string) {
-
 	issue := ValidatorAlert{
 		processName,
 		errorMsg,
@@ -46,11 +46,11 @@ func SendFailureNotification(processName, errorMsg, timestamp, severity string) 
 	}
 
 	jsonData, err := json.Marshal(issue)
-	log.Debugln("Sending notification: ", string(jsonData))
 	if err != nil {
 		log.Errorln("Unable to marshal notification: ", issue)
 		return
 	}
+
 	req, err := http.NewRequest("POST", reportingClient.url, bytes.NewBuffer(jsonData))
 	if err != nil {
 		log.Errorln("Error creating request: ", err)
