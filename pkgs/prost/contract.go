@@ -12,7 +12,6 @@ import (
 
 	"github.com/cenkalti/backoff/v4"
 	"github.com/ethereum/go-ethereum/accounts/abi"
-	"github.com/ethereum/go-ethereum/accounts/abi/bind"
 	"github.com/ethereum/go-ethereum/common"
 	"github.com/ethereum/go-ethereum/ethclient"
 	"github.com/ethereum/go-ethereum/rpc"
@@ -24,7 +23,6 @@ var (
 	Client      *ethclient.Client
 	Instance    *contract.Contract
 	ContractABI abi.ABI
-	Auth        *bind.TransactOpts
 )
 
 func ConfigureClient() {
