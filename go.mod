@@ -1,8 +1,9 @@
 module validator
 
-go 1.22
+go 1.21
 
 require (
+	github.com/cenkalti/backoff v2.2.1+incompatible
 	github.com/cenkalti/backoff/v4 v4.2.0
 	github.com/ethereum/go-ethereum v1.13.12
 	github.com/go-redis/redis/v8 v8.11.5
