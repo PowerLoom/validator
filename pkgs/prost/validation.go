@@ -53,14 +53,17 @@ func StartBatchAttestation() {
 		// Log the details of the batch being processed
 		log.Infof("🔄 Starting attestation for batchCID %s in epoch %s within data market %s", batchDetails.BatchCID, batchDetails.EpochID.String(), batchDetails.DataMarketAddress)
 
-		// Perform batch attestation
-		if err := batchDetails.Attest(); err != nil {
-			log.Errorf("Failed to attest batchCID %s in epoch %s within data market %s: %v", batchDetails.BatchCID, batchDetails.EpochID.String(), batchDetails.DataMarketAddress, err)
-			continue
-		}
+		// Launch a go routine for the attestation process
+		go func(batchDetails BatchDetails) {
+			// Perform batch attestation
+			if err := batchDetails.Attest(); err != nil {
+				log.Errorf("Failed to attest batchCID %s in epoch %s within data market %s: %v", batchDetails.BatchCID, batchDetails.EpochID.String(), batchDetails.DataMarketAddress, err)
+				return
+			}
 
-		// Log the successful attestation of the batch
-		log.Infof("✅ Successfully attested batchCID %s for epoch %s in data market %s", batchDetails.BatchCID, batchDetails.EpochID.String(), batchDetails.DataMarketAddress)
+			// Log the successful attestation of the batch
+			log.Infof("✅ Successfully attested batchCID %s for epoch %s in data market %s", batchDetails.BatchCID, batchDetails.EpochID.String(), batchDetails.DataMarketAddress)
+		}(batchDetails)
 	}
 }
 
